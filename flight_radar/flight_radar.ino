@@ -362,8 +362,9 @@ void fetchPlanes() {
     bool ok = cur != nullptr;
     planeCount = 0;
     if (ok) {
-      cur += 9;
-      while (planeCount < MAX_PLANES) {
+      cur = strchr(cur + 9, '[');
+      if (cur) cur++;
+      while (cur && planeCount < MAX_PLANES) {
         cur = strchr(cur, '[');
         if (!cur) break;
         const char *end = strchr(cur, ']');
