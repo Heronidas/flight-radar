@@ -79,9 +79,9 @@ GitHub Actions compiles the sketch on every push (ESP32 Dev Module, partition sc
 | Action | Effect |
 |---|---|
 | Turn (ZOOM) | Range: 10, 25, 50, 100 or 200 km |
-| Short press | Switch between ZOOM and SELECT |
+| Short press | Next OLED page (1/3, 2/3, 3/3) |
 | Turn (SELECT) | Select an aircraft (red) |
-| Long press (~1 s) | Next OLED page (1/3, 2/3, 3/3) |
+| Long press (~1 s) | Switch between ZOOM and SELECT |
 | No input for 10 s (SELECT) | Back to ZOOM, nearest aircraft selected |
 | Hold while powering on | Opens the setup portal |
 

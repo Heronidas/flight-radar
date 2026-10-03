@@ -161,7 +161,7 @@ bool checkButton() {
       btnDownMs = now;
       longPressDone = false;
     } else if (!longPressDone) {
-      currentMode = (currentMode == MODE_ZOOM) ? MODE_SELECT : MODE_ZOOM;
+      infoPage = (infoPage + 1) % 3;
       changed = true;
     }
     lastInputMs = now;
@@ -169,7 +169,7 @@ bool checkButton() {
 
   if (btnWasDown && !longPressDone && now - btnDownMs > LONG_PRESS_MS) {
     longPressDone = true;
-    infoPage = (infoPage + 1) % 3;
+    currentMode = (currentMode == MODE_ZOOM) ? MODE_SELECT : MODE_ZOOM;
     lastInputMs = now;
     changed = true;
   }
@@ -258,6 +258,33 @@ void lookupAircraftType(const String &icao24) {
         metaValid = true;
         metaLookupFailed = false;
       }
+    }
+  }
+  http.end();
+}
+
+char routeCallsign[9] = "";
+char routeText[24] = "";
+bool routeDone = false;
+
+void lookupRoute(const char *callsign) {
+  if (!callsign[0]) return;
+  if (routeDone && strcmp(callsign, routeCallsign) == 0) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  strlcpy(routeCallsign, callsign, sizeof(routeCallsign));
+  routeText[0] = 0;
+  routeDone = true;
+
+  HTTPClient http;
+  http.setReuse(false);
+  http.begin(secureClient, "https://hexdb.io/api/v1/route/icao/" + String(callsign));
+  http.setTimeout(5000);
+  if (http.GET() == 200) {
+    StaticJsonDocument<256> doc;
+    if (!deserializeJson(doc, http.getString())) {
+      strlcpy(routeText, doc["route"] | "", sizeof(routeText));
+      for (char *c = routeText; *c; c++) if (*c == '-') *c = '>';
     }
   }
   http.end();
@@ -602,29 +629,24 @@ void drawInfo() {
 
   infoDisplay.setTextSize(1);
   infoDisplay.setCursor(0, 20);
+  if (routeText[0] && strcmp(routeCallsign, p.callsign) == 0) infoDisplay.print(routeText);
+  else infoDisplay.print("Route: --");
+
+  infoDisplay.setCursor(0, 32);
   infoDisplay.print("Alt: ");
   infoDisplay.print((int)altFt);
   infoDisplay.print(" ft");
 
-  infoDisplay.setCursor(0, 32);
+  infoDisplay.setCursor(0, 44);
   infoDisplay.print("Spd: ");
   infoDisplay.print((int)speedKt);
   infoDisplay.print(" kt  Hdg: ");
   infoDisplay.print((int)p.heading_deg);
 
-  infoDisplay.setCursor(0, 44);
+  infoDisplay.setCursor(0, 56);
   infoDisplay.print("Dist: ");
   infoDisplay.print(p.distance_km, 1);
   infoDisplay.print(" km");
-
-  infoDisplay.setCursor(0, 56);
-  if (metaIcao24 == p.icao24 && metaValid) {
-    infoDisplay.print(clip(metaManufacturer + " " + metaType, 21));
-  } else if (metaIcao24 == p.icao24 && metaLookupFailed) {
-    infoDisplay.print("Type: unknown");
-  } else {
-    infoDisplay.print("Type: looking up...");
-  }
 
   drawPageMark();
   infoDisplay.display();
@@ -1130,7 +1152,8 @@ void loop() {
   if (needsRedraw) {
     if (visibleCount > 0) {
       int idx = (selectedIndex < visibleCount) ? selectedIndex : 0;
-      lookupAircraftType(planes[idx].icao24);
+      if (infoPage == 0) lookupRoute(planes[idx].callsign);
+      else if (infoPage == 1) lookupAircraftType(planes[idx].icao24);
     }
     drawRadar();
     drawInfo();
