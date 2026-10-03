@@ -43,7 +43,13 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 
 ## Case
 
-3D-printable enclosure: [`case/Flightradar_case.stl`](case/Flightradar_case.stl). The underside has room for adhesive anti-slip pads, 10 mm diameter.
+3D-printable enclosure: [`case/Flightradar_case.stl`](case/Flightradar_case.stl). Needed for the case:
+
+- 4 × M2×8 screws
+- 4 × M2 heat-set inserts
+- Adhesive anti-slip pads, 10 mm diameter (optional, room on the underside)
+
+Power: 5 V directly to the ESP32 `5V` and `GND` pins, with a snug cable pass-through.
 
 ![Finished device](docs/images/photo-desk.jpg)
 
