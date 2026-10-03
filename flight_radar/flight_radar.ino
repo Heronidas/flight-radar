@@ -24,6 +24,8 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -107,7 +109,7 @@ unsigned long lastFetchOkMs = 0;
 // SETTINGS (stored in flash)
 // ---------------------------------------------------------------------
 Preferences prefs;
-String cfgSsid, cfgPass, cfgClientId, cfgClientSecret;
+String cfgSsid, cfgPass, cfgClientId, cfgClientSecret, cfgOtaPass;
 double cfgLat = 0, cfgLon = 0;
 
 void loadConfig() {
@@ -116,6 +118,7 @@ void loadConfig() {
   cfgPass         = prefs.getString("pass", "");
   cfgClientId     = prefs.getString("cid", "");
   cfgClientSecret = prefs.getString("csec", "");
+  cfgOtaPass      = prefs.getString("ota", "");
   cfgLat          = prefs.getDouble("lat", 0);
   cfgLon          = prefs.getDouble("lon", 0);
   int r           = prefs.getInt("range", 3);
@@ -719,7 +722,11 @@ String formPage() {
   for (int i = 0; i < NUM_RANGES; i++) {
     h += "<option value=" + String(i) + (i == rangeIndex ? " selected" : "") + ">" + String(RANGE_PRESETS[i]) + " km</option>";
   }
-  h += F("</select><button>Speichern und neu starten</button></form></body></html>");
+  h += F("</select><label>OTA-Passwort <small>für Firmware-Updates, mind. 6 Zeichen. Ohne Passwort sind Updates aus.</small></label>"
+         "<input name=ota type=password autocomplete=off placeholder=\"");
+  h += cfgOtaPass.length() ? "(unverändert lassen)" : "";
+  h += F("\"><button>Speichern und neu starten</button></form>"
+         "<p><a href=/update>Firmware-Update</a></p></body></html>");
   return h;
 }
 
@@ -772,6 +779,14 @@ void handleSave() {
   if (csec.length() == 0 && cid == cfgClientId) csec = cfgClientSecret;
   int range = server.arg("range").toInt();
   if (range < 0 || range >= NUM_RANGES) range = 3;
+  String ota = server.arg("ota");
+  ota.trim();
+  if (ota.length() > 0 && ota.length() < 6) {
+    server.send(400, "text/html; charset=utf-8",
+                msgPage("Das OTA-Passwort muss mindestens 6 Zeichen haben.", true));
+    return;
+  }
+  if (ota.length() == 0) ota = cfgOtaPass;
 
   prefs.begin("radar", false);
   prefs.putString("ssid", ssid);
@@ -781,12 +796,105 @@ void handleSave() {
   prefs.putDouble("lat", la);
   prefs.putDouble("lon", lo);
   prefs.putInt("range", range);
+  prefs.putString("ota", ota);
   prefs.end();
 
   server.send(200, "text/html; charset=utf-8",
               msgPage("Gespeichert. Das Gerät startet neu und verbindet sich mit dem WLAN.", false));
   delay(1500);
   ESP.restart();
+}
+
+bool otaActive = false;
+bool updateOk = false;
+int updLast = -1;
+
+void showUpdateScreen(int pct) {
+  if (pct == updLast) return;
+  if (updLast < 0) {
+    radar->fillScreen(COL_BG);
+    radar->setTextColor(COL_TEXT);
+    radar->setTextSize(2);
+    radar->setCursor(84, 108);
+    radar->print("UPDATE");
+  }
+  updLast = pct;
+  infoDisplay.clearDisplay();
+  infoDisplay.setTextColor(SSD1306_WHITE);
+  infoDisplay.setTextSize(1);
+  infoDisplay.setCursor(0, 0);
+  infoDisplay.print("Firmware-Update");
+  infoDisplay.setTextSize(2);
+  infoDisplay.setCursor(0, 24);
+  infoDisplay.print(pct);
+  infoDisplay.print(" %");
+  infoDisplay.drawRect(0, 52, 128, 10, SSD1306_WHITE);
+  infoDisplay.fillRect(2, 54, (124 * pct) / 100, 6, SSD1306_WHITE);
+  infoDisplay.display();
+}
+
+bool otaAuthOk() {
+  return cfgOtaPass.length() > 0 && server.authenticate("admin", cfgOtaPass.c_str());
+}
+
+void handleUpdatePage() {
+  if (cfgOtaPass.length() == 0) {
+    server.send(200, "text/html; charset=utf-8",
+                msgPage("Updates sind ausgeschaltet. Setze auf der Einrichtungsseite ein OTA-Passwort.", true));
+    return;
+  }
+  if (!server.authenticate("admin", cfgOtaPass.c_str())) {
+    server.requestAuthentication();
+    return;
+  }
+  String h = F("<!DOCTYPE html><html><head><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>Flugradar</title></head>"
+    "<body style='font-family:sans-serif;max-width:480px;margin:auto;padding:16px'>"
+    "<h2>Firmware-Update</h2>"
+    "<form method=POST action=/update enctype=multipart/form-data>"
+    "<p><input type=file name=firmware accept=.bin required></p>"
+    "<p><button style='padding:12px;width:100%;font-size:17px'>Hochladen</button></p></form>"
+    "<p><small>Das Gerät startet nach dem Update neu.</small></p>"
+    "<p><a href=/>Zurück</a></p></body></html>");
+  server.send(200, "text/html; charset=utf-8", h);
+}
+
+void handleUpdateUpload() {
+  if (!otaAuthOk()) return;
+  HTTPUpload &up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    updateOk = false;
+    showUpdateScreen(0);
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) Update.printError(Serial);
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      updateOk = true;
+      showUpdateScreen(100);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+void handleUpdateDone() {
+  if (!otaAuthOk()) {
+    server.requestAuthentication();
+    return;
+  }
+  server.sendHeader("Connection", "close");
+  server.send(200, "text/html; charset=utf-8",
+              msgPage(updateOk ? "Update erfolgreich. Das Gerät startet neu." : "Update fehlgeschlagen.", !updateOk));
+  delay(1000);
+  if (updateOk) {
+    ESP.restart();
+  } else {
+    updLast = -1;
+    drawRadar();
+    drawInfo();
+  }
 }
 
 void handleNotFound() {
@@ -802,7 +910,11 @@ void startServer() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/rescan", HTTP_GET, handleRescan);
+  server.on("/update", HTTP_GET, handleUpdatePage);
+  server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.onNotFound(handleNotFound);
+  static const char *collect[] = {"Authorization"};
+  server.collectHeaders(collect, 1);
   server.begin();
 }
 
@@ -898,6 +1010,24 @@ void startStaServices() {
   delay(2500);
 }
 
+void startOta() {
+  if (cfgOtaPass.length() == 0) return;
+  ArduinoOTA.setHostname(MDNS_NAME);
+  ArduinoOTA.setPassword(cfgOtaPass.c_str());
+  ArduinoOTA.onStart([]() { showUpdateScreen(0); });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+    showUpdateScreen(total ? (int)((unsigned long)done * 100 / total) : 0);
+  });
+  ArduinoOTA.onEnd([]() { showUpdateScreen(100); });
+  ArduinoOTA.onError([](ota_error_t) {
+    updLast = -1;
+    drawRadar();
+    drawInfo();
+  });
+  ArduinoOTA.begin();
+  otaActive = true;
+}
+
 // ---------------------------------------------------------------------
 // SETUP / LOOP
 // ---------------------------------------------------------------------
@@ -946,6 +1076,7 @@ void setup() {
   Serial.print("WiFi connected, IP: ");
   Serial.println(WiFi.localIP());
   startStaServices();
+  startOta();
 
   fetchPlanes();
   drawRadar();
@@ -956,6 +1087,7 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  if (otaActive) ArduinoOTA.handle();
 
   bool needsRedraw = checkButton();
 

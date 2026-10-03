@@ -40,11 +40,20 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 2. Install the libraries *Adafruit GFX Library*, *Adafruit SSD1306*, *GFX Library for Arduino* (by Moon On Our Nation) and *ArduinoJson*.
 3. Upload `flight_radar/flight_radar.ino`. Nothing needs to be edited in the sketch.
 4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC. The setup page opens automatically, otherwise open `http://192.168.4.1`.
-5. Select the WiFi network, enter the password, latitude and longitude, and optionally the OpenSky client ID and secret. Save. The device restarts and connects.
+5. Select the WiFi network, enter the password, latitude and longitude, and optionally the OpenSky client ID and secret and an OTA password. Save. The device restarts and connects.
 
 The OpenSky credentials are an OAuth2 API client from your OpenSky account. Without them, requests are sent anonymously with lower rate limits.
 
 To change settings later, hold the encoder while powering on, or open `http://flightradar.local/` in the home network. Settings are stored in flash. If the saved WiFi cannot be reached, the setup portal opens and the device restarts after 10 minutes to try again.
+
+## Updates (OTA)
+
+Set an OTA password (at least 6 characters) on the setup page. Without a password, OTA is disabled. The first OTA-capable firmware must be flashed over USB.
+
+- Arduino IDE: select the network port `flightradar` under *Tools > Port*, upload as usual and enter the OTA password.
+- Browser: open `http://flightradar.local/update`, log in as `admin` with the OTA password and upload the `.bin` exported with *Sketch > Export Compiled Binary*.
+
+If the sketch does not fit the update partition, select *Tools > Partition Scheme > Minimal SPIFFS (1.9MB APP with OTA)* and flash once over USB.
 
 ## Controls
 
