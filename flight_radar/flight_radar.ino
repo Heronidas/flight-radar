@@ -267,6 +267,34 @@ char routeCallsign[9] = "";
 char routeText[24] = "";
 bool routeDone = false;
 
+struct AirportCode { char icao[5]; char iata[4]; };
+AirportCode airportCache[12];
+int airportCacheNext = 0;
+
+const char *iataFor(const char *icao) {
+  for (auto &a : airportCache) {
+    if (strcmp(a.icao, icao) == 0) return a.iata;
+  }
+  AirportCode &slot = airportCache[airportCacheNext];
+  airportCacheNext = (airportCacheNext + 1) % 12;
+  strlcpy(slot.icao, icao, sizeof(slot.icao));
+  strlcpy(slot.iata, icao + 1, sizeof(slot.iata));
+
+  HTTPClient http;
+  http.setReuse(false);
+  http.begin(secureClient, "https://hexdb.io/api/v1/airport/icao/" + String(icao));
+  http.setTimeout(5000);
+  if (http.GET() == 200) {
+    StaticJsonDocument<384> doc;
+    if (!deserializeJson(doc, http.getString())) {
+      const char *iata = doc["iata"] | "";
+      if (iata[0]) strlcpy(slot.iata, iata, sizeof(slot.iata));
+    }
+  }
+  http.end();
+  return slot.iata;
+}
+
 void lookupRoute(const char *callsign) {
   if (!callsign[0]) return;
   if (routeDone && strcmp(callsign, routeCallsign) == 0) return;
@@ -280,14 +308,21 @@ void lookupRoute(const char *callsign) {
   http.setReuse(false);
   http.begin(secureClient, "https://hexdb.io/api/v1/route/icao/" + String(callsign));
   http.setTimeout(5000);
+  char icaoRoute[24] = "";
   if (http.GET() == 200) {
     StaticJsonDocument<256> doc;
     if (!deserializeJson(doc, http.getString())) {
-      strlcpy(routeText, doc["route"] | "", sizeof(routeText));
-      for (char *c = routeText; *c; c++) if (*c == '-') *c = '>';
+      strlcpy(icaoRoute, doc["route"] | "", sizeof(icaoRoute));
     }
   }
   http.end();
+
+  char *save;
+  for (char *code = strtok_r(icaoRoute, "-", &save); code; code = strtok_r(nullptr, "-", &save)) {
+    if (strlen(code) != 4) continue;
+    if (routeText[0]) strlcat(routeText, ">", sizeof(routeText));
+    strlcat(routeText, iataFor(code), sizeof(routeText));
+  }
 }
 
 String openskyToken;
