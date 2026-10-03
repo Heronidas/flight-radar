@@ -15,6 +15,7 @@ Aircraft positions come from the OpenSky Network API, aircraft types from hexdb.
 - EC11 rotary encoder with push button
 - Regulated 5 V supply, at least 1 A
 - Adhesive anti-slip pads, 10 mm diameter (underside)
+- 4 × M2×8 screws and 4 × M2 heat-set inserts (case)
 
 ## Wiring
 
