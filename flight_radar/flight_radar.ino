@@ -1,27 +1,13 @@
 /*
-  ESP32 FLIGHT RADAR
-  GC9A01 round TFT (radar), SSD1306 OLED (info), rotary encoder.
-  Data: OpenSky Network REST API (OAuth2), type lookup via hexdb.io.
-
-  Setup: WiFi, location and OpenSky credentials are entered on a web page and
-  stored in flash. The device opens the WiFi "FlightRadar-Setup" (captive portal)
-  on first start, when WiFi fails, or when the encoder is held at power-on.
-  When connected, the same page is at http://flightradar.local/
-
-  Encoder:  turn = zoom (ZOOM mode) / pick plane (SELECT mode)
-            click = switch ZOOM/SELECT
-            long press = next OLED page (flight / details / statistics)
-  SELECT mode returns to ZOOM after SELECT_TIMEOUT_MS without input.
-
-  Libraries: Adafruit GFX, Adafruit SSD1306, GFX Library for Arduino,
-  ArduinoJson (v6 or v7).
+  ESP32 flight radar: GC9A01 round display, SSD1306 OLED, EC11 encoder.
+  Data: OpenSky Network API, type lookup via hexdb.io.
+  Settings are entered on the setup page (AP "FlightRadar-Setup" or http://flightradar.local/).
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
-#include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <ArduinoOTA.h>
@@ -70,28 +56,25 @@ Arduino_GFX *radar = new Arduino_GC9A01(bus, TFT_RST, 0, true);
 uint16_t COL_BG, COL_RING, COL_TEXT, COL_PLANE, COL_SELECTED, COL_HOME;
 
 struct Plane {
-  String icao24;
-  String callsign;
-  double lat, lon;
+  char icao24[7];
+  char callsign[9];
   float altitude_m;
   float velocity_ms;
   float heading_deg;
   float vrate_ms;
-  bool on_ground;
   float distance_km;
   float bearing_deg;
-  bool valid;
 };
 
 #define MAX_PLANES 100
 Plane planes[MAX_PLANES];
-int planeCount = 0;    // all planes within the largest range, sorted by distance
-int visibleCount = 0;  // prefix of planes[] inside the current range
+int planeCount = 0;
+int visibleCount = 0;
 
 enum Mode { MODE_ZOOM, MODE_SELECT };
 Mode currentMode = MODE_ZOOM;
 
-const int RANGE_PRESETS[] = {10, 25, 50, 100, 200}; // km
+const int RANGE_PRESETS[] = {10, 25, 50, 100, 200};
 const int NUM_RANGES = 5;
 int rangeIndex = 3;
 
@@ -99,16 +82,13 @@ int selectedIndex = 0;
 String selectedIcao = "";
 bool followNearest = true;
 
-int infoPage = 0; // 0 flight, 1 details, 2 statistics
+int infoPage = 0;
 
 unsigned long pollIntervalMs = POLL_INTERVAL_MS;
 unsigned long lastInputMs = 0;
 unsigned long lastFetchOkMs = 0;
 int lastHttpCode = 0;
 
-// ---------------------------------------------------------------------
-// SETTINGS (stored in flash)
-// ---------------------------------------------------------------------
 Preferences prefs;
 String cfgSsid, cfgPass, cfgClientId, cfgClientSecret, cfgOtaPass;
 double cfgLat = 0, cfgLon = 0;
@@ -135,9 +115,6 @@ bool hasCoords() {
   return !(cfgLat == 0 && cfgLon == 0);
 }
 
-// ---------------------------------------------------------------------
-// ENCODER
-// ---------------------------------------------------------------------
 volatile int encoderDelta = 0;
 volatile uint8_t encoderStateHistory = 0;
 volatile int8_t encoderAccum = 0;
@@ -172,7 +149,6 @@ bool longPressDone = false;
 unsigned long btnDownMs = 0;
 unsigned long btnEdgeMs = 0;
 
-// Returns true if something changed that needs a redraw.
 bool checkButton() {
   unsigned long now = millis();
   bool down = (digitalRead(ENC_SW) == LOW);
@@ -200,9 +176,6 @@ bool checkButton() {
   return changed;
 }
 
-// ---------------------------------------------------------------------
-// GEO
-// ---------------------------------------------------------------------
 double toRad(double deg) { return deg * M_PI / 180.0; }
 double toDeg(double rad) { return rad * 180.0 / M_PI; }
 
@@ -225,7 +198,6 @@ float bearingDeg(double lat1, double lon1, double lat2, double lon2) {
   return (float)fmod((brng + 360.0), 360.0);
 }
 
-// Keeps the selection on the same aircraft across polls (matched by icao24).
 void syncSelection() {
   if (planeCount == 0) {
     selectedIndex = 0;
@@ -236,7 +208,7 @@ void syncSelection() {
   } else {
     int found = -1;
     for (int i = 0; i < planeCount; i++) {
-      if (planes[i].icao24 == selectedIcao) { found = i; break; }
+      if (selectedIcao == planes[i].icao24) { found = i; break; }
     }
     selectedIndex = (found >= 0) ? found : 0;
   }
@@ -253,9 +225,6 @@ void updateVisible() {
   syncSelection();
 }
 
-// ---------------------------------------------------------------------
-// AIRCRAFT TYPE LOOKUP
-// ---------------------------------------------------------------------
 String metaIcao24;
 String metaType;
 String metaManufacturer;
@@ -294,9 +263,6 @@ void lookupAircraftType(const String &icao24) {
   http.end();
 }
 
-// ---------------------------------------------------------------------
-// OPENSKY TOKEN
-// ---------------------------------------------------------------------
 String openskyToken;
 unsigned long tokenExpiresAtMs = 0;
 
@@ -335,9 +301,6 @@ String getOpenSkyToken() {
   return openskyToken;
 }
 
-// ---------------------------------------------------------------------
-// OPENSKY FETCH (always largest range; zoom filters locally)
-// ---------------------------------------------------------------------
 int doStatesRequest(HTTPClient &http, const String &url, const String &token) {
   http.setReuse(false);
   http.useHTTP10(true);
@@ -391,9 +354,6 @@ void fetchPlanes() {
   if (code == 200) {
     pollIntervalMs = POLL_INTERVAL_MS;
 
-    // Filtered arrays are compacted:
-    // 0 icao24, 1 callsign, 2 lon, 3 lat, 4 baro_alt, 5 on_ground,
-    // 6 velocity, 7 track, 8 vertical_rate
     StaticJsonDocument<256> filter;
     const int keep[] = {0, 1, 5, 6, 7, 8, 9, 10, 11};
     for (int k : keep) filter["states"][0][k] = true;
@@ -417,23 +377,20 @@ void fetchPlanes() {
         if (!s[5].isNull() && s[5].as<bool>()) continue;
 
         Plane &p = planes[planeCount];
-        p.icao24 = String(s[0].as<const char*>());
-        const char *cs = s[1] | "";
-        p.callsign = String(cs);
-        p.callsign.trim();
-        if (p.callsign.length() == 0) p.callsign = p.icao24;
+        strlcpy(p.icao24, s[0] | "", sizeof(p.icao24));
+        strlcpy(p.callsign, s[1] | "", sizeof(p.callsign));
+        for (int k = strlen(p.callsign) - 1; k >= 0 && p.callsign[k] == ' '; k--) p.callsign[k] = 0;
+        if (!p.callsign[0]) strlcpy(p.callsign, p.icao24, sizeof(p.callsign));
 
-        p.lon = s[2].as<double>();
-        p.lat = s[3].as<double>();
+        double plon = s[2].as<double>();
+        double plat = s[3].as<double>();
         p.altitude_m = s[4].isNull() ? 0 : s[4].as<float>();
-        p.on_ground = false;
         p.velocity_ms = s[6].isNull() ? 0 : s[6].as<float>();
         p.heading_deg = s[7].isNull() ? 0 : s[7].as<float>();
         p.vrate_ms = (s.size() > 8 && !s[8].isNull()) ? s[8].as<float>() : 0;
 
-        p.distance_km = distanceKm(cfgLat, cfgLon, p.lat, p.lon);
-        p.bearing_deg = bearingDeg(cfgLat, cfgLon, p.lat, p.lon);
-        p.valid = true;
+        p.distance_km = distanceKm(cfgLat, cfgLon, plat, plon);
+        p.bearing_deg = bearingDeg(cfgLat, cfgLon, plat, plon);
 
         if (p.distance_km > rangeKm) continue;
         planeCount++;
@@ -462,9 +419,6 @@ void fetchPlanes() {
   http.end();
 }
 
-// ---------------------------------------------------------------------
-// DRAWING
-// ---------------------------------------------------------------------
 void drawRadar() {
   radar->fillScreen(COL_BG);
 
@@ -528,7 +482,7 @@ void drawPageMark() {
 void drawDetails(Plane &p) {
   infoDisplay.setTextSize(1);
   infoDisplay.setCursor(0, 0);
-  infoDisplay.print(clip(p.callsign, 8));
+  infoDisplay.print(p.callsign);
   drawPageMark();
 
   bool have = (metaIcao24 == p.icao24 && metaValid);
@@ -579,7 +533,7 @@ void drawStats() {
   infoDisplay.setCursor(0, 38);
   if (planeCount > 0) {
     infoDisplay.print("Naechst: ");
-    infoDisplay.print(clip(planes[0].callsign, 8));
+    infoDisplay.print(planes[0].callsign);
   } else {
     infoDisplay.print("Kein Verkehr");
   }
@@ -640,7 +594,7 @@ void drawInfo() {
 
   infoDisplay.setTextSize(2);
   infoDisplay.setCursor(0, 0);
-  infoDisplay.print(clip(p.callsign, 8));
+  infoDisplay.print(p.callsign);
 
   infoDisplay.setTextSize(1);
   infoDisplay.setCursor(0, 20);
@@ -672,11 +626,7 @@ void drawInfo() {
   infoDisplay.display();
 }
 
-// ---------------------------------------------------------------------
-// WEB SETUP (captive portal + settings page)
-// ---------------------------------------------------------------------
 WebServer server(80);
-DNSServer dnsServer;
 bool portalMode = false;
 bool wifiScanned = false;
 String netOptions;
@@ -958,10 +908,10 @@ void showPortalScreens() {
   radar->print("Setup");
   radar->setTextColor(COL_TEXT);
   radar->setTextSize(1);
-  radar->setCursor(66, 182);
-  radar->print("Seite oeffnet sich");
-  radar->setCursor(72, 196);
-  radar->print("oder 192.168.4.1");
+  radar->setCursor(60, 182);
+  radar->print("Browser oeffnen:");
+  radar->setCursor(66, 196);
+  radar->print("192.168.4.1");
 
   infoDisplay.clearDisplay();
   infoDisplay.setTextColor(SSD1306_WHITE);
@@ -969,8 +919,8 @@ void showPortalScreens() {
   infoDisplay.setCursor(0, 0);  infoDisplay.print("EINRICHTUNG");
   infoDisplay.setCursor(0, 14); infoDisplay.print("1. WLAN verbinden:");
   infoDisplay.setCursor(0, 26); infoDisplay.print("FlightRadar-Setup");
-  infoDisplay.setCursor(0, 40); infoDisplay.print("2. Seite oeffnet sich");
-  infoDisplay.setCursor(0, 52); infoDisplay.print("oder 192.168.4.1");
+  infoDisplay.setCursor(0, 40); infoDisplay.print("2. Browser oeffnen:");
+  infoDisplay.setCursor(0, 52); infoDisplay.print("192.168.4.1");
   infoDisplay.display();
 }
 
@@ -984,13 +934,11 @@ void runPortal(unsigned long timeoutMs) {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(SETUP_AP_NAME);
   delay(300);
-  dnsServer.start(53, "*", WiFi.softAPIP());
   startServer();
   showPortalScreens();
 
   unsigned long t0 = millis();
   while (timeoutMs == 0 || millis() - t0 < timeoutMs) {
-    dnsServer.processNextRequest();
     server.handleClient();
     delay(2);
   }
@@ -1070,9 +1018,6 @@ void startOta() {
   otaActive = true;
 }
 
-// ---------------------------------------------------------------------
-// SETUP / LOOP
-// ---------------------------------------------------------------------
 unsigned long lastPoll = 0;
 unsigned long lastInfoRedraw = 0;
 

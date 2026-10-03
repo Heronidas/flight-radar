@@ -42,7 +42,7 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 1. Install the ESP32 board package and select **ESP32 Dev Module**.
 2. Install the libraries *Adafruit GFX Library*, *Adafruit SSD1306*, *GFX Library for Arduino* (by Moon On Our Nation) and *ArduinoJson*.
 3. Upload `flight_radar/flight_radar.ino`. Nothing needs to be edited in the sketch.
-4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC. The setup page opens automatically, otherwise open `http://192.168.4.1`.
+4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC and open `http://192.168.4.1`.
 5. Select the WiFi network, enter the password and save. Only the WiFi is required. The device restarts and connects.
 6. Open `http://flightradar.local/` (or the IP shown on the small display) and enter latitude, longitude, the OpenSky client ID and secret, and an OTA password. Until coordinates are set, the displays ask for them.
 
