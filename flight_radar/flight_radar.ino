@@ -24,7 +24,6 @@ const char *MDNS_NAME = "flightradar";
 
 const unsigned long POLL_INTERVAL_MS   = 30000;
 const unsigned long BACKOFF_429_MS     = 180000;
-const unsigned long SELECT_TIMEOUT_MS  = 30000;
 const unsigned long LONG_PRESS_MS      = 700;
 const unsigned long WIFI_TIMEOUT_MS    = 20000;
 const unsigned long PORTAL_TIMEOUT_MS  = 600000;
@@ -85,7 +84,6 @@ bool followNearest = true;
 int infoPage = 0;
 
 unsigned long pollIntervalMs = POLL_INTERVAL_MS;
-unsigned long lastInputMs = 0;
 unsigned long lastFetchOkMs = 0;
 int lastHttpCode = 0;
 
@@ -164,13 +162,11 @@ bool checkButton() {
       infoPage = (infoPage + 1) % 3;
       changed = true;
     }
-    lastInputMs = now;
   }
 
   if (btnWasDown && !longPressDone && now - btnDownMs > LONG_PRESS_MS) {
     longPressDone = true;
     currentMode = (currentMode == MODE_ZOOM) ? MODE_SELECT : MODE_ZOOM;
-    lastInputMs = now;
     changed = true;
   }
   return changed;
@@ -1127,7 +1123,6 @@ void setup() {
   startOta();
 
   lastPoll = millis();
-  lastInputMs = millis();
   if (!hasCoords()) {
     showNeedCoords();
     return;
@@ -1154,7 +1149,6 @@ void loop() {
   interrupts();
 
   if (delta != 0) {
-    lastInputMs = millis();
     if (currentMode == MODE_ZOOM) {
       rangeIndex += (delta > 0) ? 1 : -1;
       if (rangeIndex < 0) rangeIndex = 0;
@@ -1170,13 +1164,6 @@ void loop() {
     needsRedraw = true;
   }
 
-  if (currentMode == MODE_SELECT && millis() - lastInputMs > SELECT_TIMEOUT_MS) {
-    currentMode = MODE_ZOOM;
-    followNearest = true;
-    updateVisible();
-    needsRedraw = true;
-  }
-
   if (millis() - lastPoll > pollIntervalMs) {
     if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
     fetchPlanes();
@@ -1189,7 +1176,6 @@ void loop() {
       int idx = (selectedIndex < visibleCount) ? selectedIndex : 0;
       if (infoPage == 0) lookupRoute(planes[idx].callsign);
       else if (infoPage == 1) lookupAircraftType(planes[idx].icao24);
-      if (currentMode == MODE_SELECT) lastInputMs = millis();
     }
     drawRadar();
     drawInfo();

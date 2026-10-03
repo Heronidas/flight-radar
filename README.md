@@ -82,7 +82,6 @@ GitHub Actions compiles the sketch on every push (ESP32 Dev Module, partition sc
 | Short press | Next OLED page (1/3, 2/3, 3/3) |
 | Turn (SELECT) | Select an aircraft (red) |
 | Long press (~1 s) | Switch between ZOOM and SELECT |
-| No input for 30 s (SELECT) | Back to ZOOM, nearest aircraft selected |
 | Hold while powering on | Opens the setup portal |
 
 The selection stays on the same aircraft between updates. Data is polled every 30 s and backs off for 3 minutes on HTTP 429.
