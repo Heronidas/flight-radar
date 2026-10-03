@@ -354,27 +354,28 @@ void fetchPlanes() {
   if (code == 200) {
     pollIntervalMs = POLL_INTERVAL_MS;
 
-    StaticJsonDocument<256> filter;
-    const int keep[] = {0, 1, 5, 6, 7, 8, 9, 10, 11};
-    for (int k : keep) filter["states"][0][k] = true;
-
     String body = http.getString();
     Serial.print("Payload bytes: ");
     Serial.println(body.length());
 
-    DynamicJsonDocument doc(40960);
-    DeserializationError err = deserializeJson(
-        doc, body, DeserializationOption::Filter(filter));
-    body = String();
-
-    if (!err) {
-      JsonArray states = doc["states"].as<JsonArray>();
-      planeCount = 0;
-      for (JsonArray s : states) {
-        if (planeCount >= MAX_PLANES) break;
-        if (s.size() < 8) continue;
-        if (s[2].isNull() || s[3].isNull()) continue;
-        if (!s[5].isNull() && s[5].as<bool>()) continue;
+    const char *cur = strstr(body.c_str(), "\"states\":");
+    bool ok = cur != nullptr;
+    planeCount = 0;
+    if (ok) {
+      cur += 9;
+      while (planeCount < MAX_PLANES) {
+        cur = strchr(cur, '[');
+        if (!cur) break;
+        const char *end = strchr(cur, ']');
+        if (!end) break;
+        StaticJsonDocument<1024> d;
+        DeserializationError err = deserializeJson(d, cur, end - cur + 1);
+        cur = end + 1;
+        if (err) continue;
+        JsonArray s = d.as<JsonArray>();
+        if (s.size() < 12) continue;
+        if (s[5].isNull() || s[6].isNull()) continue;
+        if (s[8].as<bool>()) continue;
 
         Plane &p = planes[planeCount];
         strlcpy(p.icao24, s[0] | "", sizeof(p.icao24));
@@ -382,12 +383,12 @@ void fetchPlanes() {
         for (int k = strlen(p.callsign) - 1; k >= 0 && p.callsign[k] == ' '; k--) p.callsign[k] = 0;
         if (!p.callsign[0]) strlcpy(p.callsign, p.icao24, sizeof(p.callsign));
 
-        double plon = s[2].as<double>();
-        double plat = s[3].as<double>();
-        p.altitude_m = s[4].isNull() ? 0 : s[4].as<float>();
-        p.velocity_ms = s[6].isNull() ? 0 : s[6].as<float>();
-        p.heading_deg = s[7].isNull() ? 0 : s[7].as<float>();
-        p.vrate_ms = (s.size() > 8 && !s[8].isNull()) ? s[8].as<float>() : 0;
+        double plon = s[5].as<double>();
+        double plat = s[6].as<double>();
+        p.altitude_m = s[7].as<float>();
+        p.velocity_ms = s[9].as<float>();
+        p.heading_deg = s[10].as<float>();
+        p.vrate_ms = s[11].as<float>();
 
         p.distance_km = distanceKm(cfgLat, cfgLon, plat, plon);
         p.bearing_deg = bearingDeg(cfgLat, cfgLon, plat, plon);
@@ -395,7 +396,10 @@ void fetchPlanes() {
         if (p.distance_km > rangeKm) continue;
         planeCount++;
       }
+    }
+    body = String();
 
+    if (ok) {
       for (int i = 1; i < planeCount; i++) {
         Plane key = planes[i];
         int j = i - 1;
@@ -411,8 +415,7 @@ void fetchPlanes() {
       Serial.print("Planes in range: ");
       Serial.println(planeCount);
     } else {
-      Serial.print("JSON parse error: ");
-      Serial.println(err.c_str());
+      Serial.println("No states in response");
       lastHttpCode = -100;
     }
   }
