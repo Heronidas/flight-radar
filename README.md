@@ -55,6 +55,13 @@ Set an OTA password (at least 6 characters) on the setup page. Without a passwor
 
 If the sketch does not fit the update partition, select *Tools > Partition Scheme > Minimal SPIFFS (1.9MB APP with OTA)* and flash once over USB.
 
+## Binaries
+
+GitHub Actions compiles the sketch on every push (ESP32 Dev Module, partition scheme *Minimal SPIFFS*). The binaries are attached to the workflow run. Pushing a tag such as `v1.0.0` publishes them as a release:
+
+- `*.merged.bin`: complete image for the first flash over USB (write at offset 0x0 with esptool or a browser flasher)
+- `flight_radar.ino.bin`: application only, for OTA updates
+
 ## Controls
 
 | Action | Effect |
