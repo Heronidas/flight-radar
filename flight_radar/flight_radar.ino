@@ -342,7 +342,7 @@ int doStatesRequest(HTTPClient &http, const String &url, const String &token) {
   http.setReuse(false);
   http.useHTTP10(true);
   http.begin(secureClient, url);
-  http.setTimeout(8000);
+  http.setTimeout(15000);
   if (token.length() > 0) {
     http.addHeader("Authorization", "Bearer " + token);
   }
@@ -398,9 +398,14 @@ void fetchPlanes() {
     const int keep[] = {0, 1, 5, 6, 7, 8, 9, 10, 11};
     for (int k : keep) filter["states"][0][k] = true;
 
+    String body = http.getString();
+    Serial.print("Payload bytes: ");
+    Serial.println(body.length());
+
     DynamicJsonDocument doc(40960);
     DeserializationError err = deserializeJson(
-        doc, http.getStream(), DeserializationOption::Filter(filter));
+        doc, body, DeserializationOption::Filter(filter));
+    body = String();
 
     if (!err) {
       JsonArray states = doc["states"].as<JsonArray>();
@@ -451,6 +456,7 @@ void fetchPlanes() {
     } else {
       Serial.print("JSON parse error: ");
       Serial.println(err.c_str());
+      lastHttpCode = -100;
     }
   }
   http.end();
