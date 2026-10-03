@@ -127,7 +127,11 @@ void loadConfig() {
 }
 
 bool hasConfig() {
-  return cfgSsid.length() > 0 && !(cfgLat == 0 && cfgLon == 0);
+  return cfgSsid.length() > 0;
+}
+
+bool hasCoords() {
+  return !(cfgLat == 0 && cfgLon == 0);
 }
 
 // ---------------------------------------------------------------------
@@ -705,13 +709,14 @@ String formPage() {
   h += F("\"><small><a href=/rescan>Netzwerke neu suchen</a></small>"
          "<label>WLAN-Passwort</label><input name=pass type=password autocomplete=off placeholder=\"");
   h += cfgSsid.length() ? "(unverändert lassen)" : "";
-  h += F("\"><label>Breitengrad <small>z. B. 52.5200</small></label>"
+  h += F("\"><label>Breitengrad <small>optional, z. B. 52.5200</small></label>"
          "<input name=lat inputmode=decimal value=\"");
   h += (cfgLat != 0 ? String(cfgLat, 6) : String(""));
-  h += F("\"><label>Längengrad <small>z. B. 13.4050</small></label>"
+  h += F("\"><label>Längengrad <small>optional, z. B. 13.4050</small></label>"
          "<input name=lon inputmode=decimal value=\"");
   h += (cfgLon != 0 ? String(cfgLon, 6) : String(""));
-  h += F("\"><small>Koordinaten: in Google Maps den Standort lange antippen, die Zahlen erscheinen oben.</small>"
+  h += F("\"><small>Koordinaten: in Google Maps den Standort lange antippen, die Zahlen erscheinen oben. "
+         "Nur das WLAN ist Pflicht. Alles andere kann später unter flightradar.local ergänzt werden.</small>"
          "<label>OpenSky Client-ID <small>optional</small></label>"
          "<input name=cid autocapitalize=off value=\"");
   h += esc(cfgClientId);
@@ -761,11 +766,10 @@ void handleSave() {
   String lon = server.arg("lon");
   lat.trim(); lat.replace(',', '.');
   lon.trim(); lon.replace(',', '.');
-  double la = lat.toDouble();
-  double lo = lon.toDouble();
+  double la = lat.length() ? lat.toDouble() : cfgLat;
+  double lo = lon.length() ? lon.toDouble() : cfgLon;
 
-  if (ssid.length() == 0 || lat.length() == 0 || lon.length() == 0 ||
-      fabs(la) > 90 || fabs(lo) > 180 || (la == 0 && lo == 0)) {
+  if (ssid.length() == 0 || fabs(la) > 90 || fabs(lo) > 180) {
     server.send(400, "text/html; charset=utf-8",
                 msgPage("Bitte WLAN-Name sowie Breiten- und Längengrad prüfen.", true));
     return;
@@ -1010,6 +1014,25 @@ void startStaServices() {
   delay(2500);
 }
 
+void showNeedCoords() {
+  radar->fillScreen(COL_BG);
+  radar->setTextColor(COL_TEXT);
+  radar->setTextSize(2);
+  radar->setCursor(36, 96);
+  radar->print("Koordinaten");
+  radar->setCursor(60, 120);
+  radar->print("fehlen");
+  infoDisplay.clearDisplay();
+  infoDisplay.setTextColor(SSD1306_WHITE);
+  infoDisplay.setTextSize(1);
+  infoDisplay.setCursor(0, 0);  infoDisplay.print("Koordinaten fehlen");
+  infoDisplay.setCursor(0, 16); infoDisplay.print("Im Browser oeffnen:");
+  infoDisplay.setCursor(0, 28); infoDisplay.print("flightradar.local");
+  infoDisplay.setCursor(0, 40); infoDisplay.print("oder ");
+  infoDisplay.print(WiFi.localIP());
+  infoDisplay.display();
+}
+
 void startOta() {
   if (cfgOtaPass.length() == 0) return;
   ArduinoOTA.setHostname(MDNS_NAME);
@@ -1078,16 +1101,25 @@ void setup() {
   startStaServices();
   startOta();
 
+  lastPoll = millis();
+  lastInputMs = millis();
+  if (!hasCoords()) {
+    showNeedCoords();
+    return;
+  }
   fetchPlanes();
   drawRadar();
   drawInfo();
-  lastPoll = millis();
-  lastInputMs = millis();
 }
 
 void loop() {
   server.handleClient();
   if (otaActive) ArduinoOTA.handle();
+
+  if (!hasCoords()) {
+    delay(20);
+    return;
+  }
 
   bool needsRedraw = checkButton();
 

@@ -43,9 +43,18 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 2. Install the libraries *Adafruit GFX Library*, *Adafruit SSD1306*, *GFX Library for Arduino* (by Moon On Our Nation) and *ArduinoJson*.
 3. Upload `flight_radar/flight_radar.ino`. Nothing needs to be edited in the sketch.
 4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC. The setup page opens automatically, otherwise open `http://192.168.4.1`.
-5. Select the WiFi network, enter the password, latitude and longitude, and optionally the OpenSky client ID and secret and an OTA password. Save. The device restarts and connects.
+5. Select the WiFi network, enter the password and save. Only the WiFi is required. The device restarts and connects.
+6. Open `http://flightradar.local/` (or the IP shown on the small display) and enter latitude, longitude, the OpenSky client ID and secret, and an OTA password. Until coordinates are set, the displays ask for them.
 
-The OpenSky credentials are an OAuth2 API client from your OpenSky account. Without them, requests are sent anonymously with lower rate limits.
+## OpenSky API
+
+Aircraft data comes from the [OpenSky Network](https://opensky-network.org). Credentials are optional but recommended: anonymous access is limited to 400 credits per day, accounts get 4,000.
+
+1. Create a free account at [opensky-network.org](https://opensky-network.org).
+2. Open the [Account page](https://opensky-network.org/my-opensky/account) and create a new API client.
+3. Copy the `client_id` and `client_secret` and paste them into the setup page.
+
+Latitude and longitude: long-press the location in Google Maps, the coordinates appear at the top.
 
 To change settings later, hold the encoder while powering on, or open `http://flightradar.local/` in the home network. Settings are stored in flash. If the saved WiFi cannot be reached, the setup portal opens and the device restarts after 10 minutes to try again.
 
