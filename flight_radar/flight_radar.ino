@@ -104,6 +104,7 @@ int infoPage = 0; // 0 flight, 1 details, 2 statistics
 unsigned long pollIntervalMs = POLL_INTERVAL_MS;
 unsigned long lastInputMs = 0;
 unsigned long lastFetchOkMs = 0;
+int lastHttpCode = 0;
 
 // ---------------------------------------------------------------------
 // SETTINGS (stored in flash)
@@ -369,6 +370,8 @@ void fetchPlanes() {
   Serial.print("Free heap: ");
   Serial.println(ESP.getFreeHeap());
 
+  lastHttpCode = code;
+
   if (code == 429) {
     Serial.println("Rate limited, backing off");
     pollIntervalMs = BACKOFF_429_MS;
@@ -382,6 +385,7 @@ void fetchPlanes() {
     code = doStatesRequest(http, url, token);
     Serial.print("Retry HTTP code: ");
     Serial.println(code);
+    lastHttpCode = code;
   }
 
   if (code == 200) {
@@ -597,11 +601,20 @@ void drawInfo() {
   if (visibleCount == 0) {
     infoDisplay.setTextSize(1);
     infoDisplay.setCursor(0, 0);
-    infoDisplay.print("No traffic");
-    infoDisplay.setCursor(0, 20);
+    if (lastHttpCode != 200 && lastHttpCode != 0) {
+      infoDisplay.print("API Fehler ");
+      infoDisplay.print(lastHttpCode);
+    } else {
+      infoDisplay.print("No traffic");
+    }
+    infoDisplay.setCursor(0, 14);
     infoDisplay.print("Range: ");
     infoDisplay.print(RANGE_PRESETS[rangeIndex]);
     infoDisplay.print(" km");
+    infoDisplay.setCursor(0, 28);
+    infoDisplay.print(cfgLat, 4);
+    infoDisplay.setCursor(0, 40);
+    infoDisplay.print(cfgLon, 4);
     drawPageMark();
     infoDisplay.display();
     return;
