@@ -10,10 +10,12 @@ Aircraft positions come from the OpenSky Network API, aircraft types from hexdb.
 - GC9A01 1.28" round display, 240x240 (SPI)
 - SSD1306 0.96" OLED, 128x64 (I2C, address 0x3C)
 - EC11 rotary encoder with push button
+- Regulated 5 V supply, at least 1 A
+- Adhesive anti-slip pads, 10 mm diameter (underside)
 
 ## Wiring
 
-All parts run at 3.3 V.
+All parts run at 3.3 V. Power is fed directly to the ESP32 `5V` and `GND` pins; the enclosure has a snug cable pass-through. Disconnect the supply while flashing over USB.
 
 | Part | Part pin | ESP32 pin |
 |---|---|---|
@@ -31,6 +33,7 @@ All parts run at 3.3 V.
 | | CLK | GPIO25 |
 | | DT | GPIO26 |
 | | SW | GPIO27 |
+| Power supply | +5 V / GND | 5V / GND |
 
 GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires briefly.
 
