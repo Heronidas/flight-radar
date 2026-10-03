@@ -24,7 +24,7 @@ const char *MDNS_NAME = "flightradar";
 
 const unsigned long POLL_INTERVAL_MS   = 30000;
 const unsigned long BACKOFF_429_MS     = 180000;
-const unsigned long SELECT_TIMEOUT_MS  = 10000;
+const unsigned long SELECT_TIMEOUT_MS  = 30000;
 const unsigned long LONG_PRESS_MS      = 700;
 const unsigned long WIFI_TIMEOUT_MS    = 20000;
 const unsigned long PORTAL_TIMEOUT_MS  = 600000;
@@ -1189,6 +1189,7 @@ void loop() {
       int idx = (selectedIndex < visibleCount) ? selectedIndex : 0;
       if (infoPage == 0) lookupRoute(planes[idx].callsign);
       else if (infoPage == 1) lookupAircraftType(planes[idx].icao24);
+      if (currentMode == MODE_SELECT) lastInputMs = millis();
     }
     drawRadar();
     drawInfo();
