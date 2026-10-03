@@ -4,6 +4,9 @@ ESP32 desk flight radar. A round GC9A01 display shows aircraft around a fixed lo
 
 Aircraft positions come from the OpenSky Network API, aircraft types from hexdb.io.
 
+![Flight page](docs/images/photo-flight.jpg)
+![Details page](docs/images/photo-details.jpg)
+
 ## Hardware
 
 - ESP32 DevKit (38 pin)
@@ -37,6 +40,12 @@ All parts run at 3.3 V. Power is fed directly to the ESP32 `5V` and `GND` pins; 
 
 GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires briefly.
 
+## Case
+
+3D-printable enclosure: [`case/Flightradar_case.stl`](case/Flightradar_case.stl). The underside has room for four adhesive anti-slip pads, 10 mm diameter.
+
+![Finished device](docs/images/photo-desk.jpg)
+
 ## Setup
 
 1. Install the ESP32 board package and select **ESP32 Dev Module**.
@@ -45,6 +54,8 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC and open `http://192.168.4.1`.
 5. Select the WiFi network, enter the password and save. Only the WiFi is required. The device restarts and connects.
 6. Open `http://flightradar.local/` (or the IP shown on the small display) and enter latitude, longitude, the OpenSky client ID and secret, and an OTA password. Until coordinates are set, the displays ask for them.
+
+![Setup screen](docs/images/photo-setup.jpg)
 
 ## OpenSky API
 
