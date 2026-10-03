@@ -3,6 +3,11 @@
   GC9A01 round TFT (radar), SSD1306 OLED (info), rotary encoder.
   Data: OpenSky Network REST API (OAuth2), type lookup via hexdb.io.
 
+  Setup: WiFi, location and OpenSky credentials are entered on a web page and
+  stored in flash. The device opens the WiFi "FlightRadar-Setup" (captive portal)
+  on first start, when WiFi fails, or when the encoder is held at power-on.
+  When connected, the same page is at http://flightradar.local/
+
   Encoder:  turn = zoom (ZOOM mode) / pick plane (SELECT mode)
             click = switch ZOOM/SELECT
             long press = next OLED page (flight / details / statistics)
@@ -15,6 +20,10 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <ESPmDNS.h>
+#include <Preferences.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -22,20 +31,15 @@
 #include <Arduino_GFX_Library.h>
 #include <math.h>
 
-const char *WIFI_SSID     = "";
-const char *WIFI_PASSWORD = "";
+const char *SETUP_AP_NAME   = "FlightRadar-Setup";
+const char *MDNS_NAME = "flightradar";
 
-const double HOME_LAT = 0.0;
-const double HOME_LON = 0.0;
-
-// 4000 credits/day with OAuth; a 200 km box costs 1 credit per call.
 const unsigned long POLL_INTERVAL_MS   = 30000;
 const unsigned long BACKOFF_429_MS     = 180000;
 const unsigned long SELECT_TIMEOUT_MS  = 10000;
 const unsigned long LONG_PRESS_MS      = 700;
-
-const char *OPENSKY_CLIENT_ID     = "YOUR_CLIENT_ID";
-const char *OPENSKY_CLIENT_SECRET = "YOUR_CLIENT_SECRET";
+const unsigned long WIFI_TIMEOUT_MS    = 20000;
+const unsigned long PORTAL_TIMEOUT_MS  = 600000;
 
 #define TFT_CS   15
 #define TFT_DC   2
@@ -98,6 +102,30 @@ int infoPage = 0; // 0 flight, 1 details, 2 statistics
 unsigned long pollIntervalMs = POLL_INTERVAL_MS;
 unsigned long lastInputMs = 0;
 unsigned long lastFetchOkMs = 0;
+
+// ---------------------------------------------------------------------
+// SETTINGS (stored in flash)
+// ---------------------------------------------------------------------
+Preferences prefs;
+String cfgSsid, cfgPass, cfgClientId, cfgClientSecret;
+double cfgLat = 0, cfgLon = 0;
+
+void loadConfig() {
+  prefs.begin("radar", true);
+  cfgSsid         = prefs.getString("ssid", "");
+  cfgPass         = prefs.getString("pass", "");
+  cfgClientId     = prefs.getString("cid", "");
+  cfgClientSecret = prefs.getString("csec", "");
+  cfgLat          = prefs.getDouble("lat", 0);
+  cfgLon          = prefs.getDouble("lon", 0);
+  int r           = prefs.getInt("range", 3);
+  rangeIndex      = (r < 0 || r >= NUM_RANGES) ? 3 : r;
+  prefs.end();
+}
+
+bool hasConfig() {
+  return cfgSsid.length() > 0 && !(cfgLat == 0 && cfgLon == 0);
+}
 
 // ---------------------------------------------------------------------
 // ENCODER
@@ -265,6 +293,7 @@ String openskyToken;
 unsigned long tokenExpiresAtMs = 0;
 
 String getOpenSkyToken() {
+  if (cfgClientId.length() == 0 || cfgClientSecret.length() == 0) return "";
   if (openskyToken.length() > 0 && millis() < tokenExpiresAtMs) {
     return openskyToken;
   }
@@ -275,8 +304,8 @@ String getOpenSkyToken() {
   http.begin(secureClient, "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token");
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  String body = "grant_type=client_credentials&client_id=" + String(OPENSKY_CLIENT_ID) +
-                "&client_secret=" + String(OPENSKY_CLIENT_SECRET);
+  String body = "grant_type=client_credentials&client_id=" + cfgClientId +
+                "&client_secret=" + cfgClientSecret;
 
   int code = http.POST(body);
   if (code == 200) {
@@ -317,12 +346,12 @@ void fetchPlanes() {
 
   int rangeKm = RANGE_PRESETS[NUM_RANGES - 1];
   double latPad = rangeKm / 111.0;
-  double lonPad = rangeKm / (111.0 * cos(toRad(HOME_LAT)) + 0.0001);
+  double lonPad = rangeKm / (111.0 * cos(toRad(cfgLat)) + 0.0001);
 
-  String url = "https://opensky-network.org/api/states/all?lamin=" + String(HOME_LAT - latPad, 4) +
-               "&lomin=" + String(HOME_LON - lonPad, 4) +
-               "&lamax=" + String(HOME_LAT + latPad, 4) +
-               "&lomax=" + String(HOME_LON + lonPad, 4);
+  String url = "https://opensky-network.org/api/states/all?lamin=" + String(cfgLat - latPad, 4) +
+               "&lomin=" + String(cfgLon - lonPad, 4) +
+               "&lamax=" + String(cfgLat + latPad, 4) +
+               "&lomax=" + String(cfgLon + lonPad, 4);
 
   String token = getOpenSkyToken();
 
@@ -386,8 +415,8 @@ void fetchPlanes() {
         p.heading_deg = s[7].isNull() ? 0 : s[7].as<float>();
         p.vrate_ms = (s.size() > 8 && !s[8].isNull()) ? s[8].as<float>() : 0;
 
-        p.distance_km = distanceKm(HOME_LAT, HOME_LON, p.lat, p.lon);
-        p.bearing_deg = bearingDeg(HOME_LAT, HOME_LON, p.lat, p.lon);
+        p.distance_km = distanceKm(cfgLat, cfgLon, p.lat, p.lon);
+        p.bearing_deg = bearingDeg(cfgLat, cfgLon, p.lat, p.lon);
         p.valid = true;
 
         if (p.distance_km > rangeKm) continue;
@@ -463,7 +492,7 @@ void drawRadar() {
     }
   }
 
-  radar->setCursor(RADAR_CX - 28, RADAR_H - 14);
+  radar->setCursor(RADAR_CX + 4, RADAR_CY + RADAR_MAX_R - 12);
   radar->setTextColor(COL_TEXT);
   radar->print(currentMode == MODE_ZOOM ? "ZOOM" : "SELECT");
 }
@@ -514,7 +543,8 @@ void drawDetails(Plane &p) {
 void drawStats() {
   infoDisplay.setTextSize(1);
   infoDisplay.setCursor(0, 0);
-  infoDisplay.print("Statistik");
+  infoDisplay.print("IP ");
+  infoDisplay.print(WiFi.localIP());
   drawPageMark();
 
   infoDisplay.setCursor(0, 14);
@@ -560,7 +590,7 @@ void drawInfo() {
   if (visibleCount == 0) {
     infoDisplay.setTextSize(1);
     infoDisplay.setCursor(0, 0);
-    infoDisplay.print("No traffic in range");
+    infoDisplay.print("No traffic");
     infoDisplay.setCursor(0, 20);
     infoDisplay.print("Range: ");
     infoDisplay.print(RANGE_PRESETS[rangeIndex]);
@@ -617,6 +647,258 @@ void drawInfo() {
 }
 
 // ---------------------------------------------------------------------
+// WEB SETUP (captive portal + settings page)
+// ---------------------------------------------------------------------
+WebServer server(80);
+DNSServer dnsServer;
+bool portalMode = false;
+bool wifiScanned = false;
+String netOptions;
+
+String esc(const String &s) {
+  String o;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '&') o += "&amp;";
+    else if (c == '<') o += "&lt;";
+    else if (c == '>') o += "&gt;";
+    else if (c == '"') o += "&quot;";
+    else if (c == '\'') o += "&#39;";
+    else o += c;
+  }
+  return o;
+}
+
+void scanWifi() {
+  int n = WiFi.scanNetworks();
+  netOptions = "";
+  String seen = "|";
+  for (int i = 0; i < n && i < 25; i++) {
+    String s = WiFi.SSID(i);
+    if (s.length() == 0 || seen.indexOf("|" + s + "|") >= 0) continue;
+    seen += s + "|";
+    netOptions += "<option value=\"" + esc(s) + "\">" + esc(s) + " (" + String(WiFi.RSSI(i)) + " dBm)</option>";
+  }
+  WiFi.scanDelete();
+  wifiScanned = true;
+}
+
+String formPage() {
+  String h = F("<!DOCTYPE html><html><head><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>Flugradar</title><style>"
+    "body{font-family:sans-serif;max-width:480px;margin:auto;padding:16px}"
+    "label{display:block;margin-top:14px;font-weight:600}"
+    "input,select{width:100%;padding:9px;font-size:16px;box-sizing:border-box;margin-top:4px}"
+    "button{margin-top:20px;padding:13px;width:100%;font-size:17px}"
+    "small{color:#666;font-weight:400}</style></head><body>"
+    "<h2>Flugradar</h2><form method=POST action=/save>"
+    "<label>WLAN-Netzwerk</label>"
+    "<select onchange=\"document.getElementById('s').value=this.value\">"
+    "<option value=\"\">Netzwerk wählen ...</option>");
+  h += netOptions;
+  h += F("</select><input id=s name=ssid placeholder=\"oder Name eingeben\" value=\"");
+  h += esc(cfgSsid);
+  h += F("\"><small><a href=/rescan>Netzwerke neu suchen</a></small>"
+         "<label>WLAN-Passwort</label><input name=pass type=password autocomplete=off placeholder=\"");
+  h += cfgSsid.length() ? "(unverändert lassen)" : "";
+  h += F("\"><label>Breitengrad <small>z. B. 52.5200</small></label>"
+         "<input name=lat inputmode=decimal value=\"");
+  h += (cfgLat != 0 ? String(cfgLat, 6) : String(""));
+  h += F("\"><label>Längengrad <small>z. B. 13.4050</small></label>"
+         "<input name=lon inputmode=decimal value=\"");
+  h += (cfgLon != 0 ? String(cfgLon, 6) : String(""));
+  h += F("\"><small>Koordinaten: in Google Maps den Standort lange antippen, die Zahlen erscheinen oben.</small>"
+         "<label>OpenSky Client-ID <small>optional</small></label>"
+         "<input name=cid autocapitalize=off value=\"");
+  h += esc(cfgClientId);
+  h += F("\"><label>OpenSky Client-Secret <small>optional</small></label>"
+         "<input name=csec type=password autocomplete=off placeholder=\"");
+  h += cfgClientSecret.length() ? "(unverändert lassen)" : "";
+  h += F("\"><label>Start-Radius</label><select name=range>");
+  for (int i = 0; i < NUM_RANGES; i++) {
+    h += "<option value=" + String(i) + (i == rangeIndex ? " selected" : "") + ">" + String(RANGE_PRESETS[i]) + " km</option>";
+  }
+  h += F("</select><button>Speichern und neu starten</button></form></body></html>");
+  return h;
+}
+
+String msgPage(const String &msg, bool back) {
+  String h = F("<!DOCTYPE html><html><head><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>Flugradar</title></head>"
+    "<body style='font-family:sans-serif;max-width:480px;margin:auto;padding:16px'>"
+    "<h2>Flugradar</h2><p>");
+  h += msg;
+  h += back ? "</p><p><a href=/>Zurück</a></p>" : "</p>";
+  h += F("</body></html>");
+  return h;
+}
+
+void handleRoot() {
+  if (!wifiScanned) scanWifi();
+  server.send(200, "text/html; charset=utf-8", formPage());
+}
+
+void handleRescan() {
+  scanWifi();
+  server.sendHeader("Location", "/");
+  server.send(302, "text/plain", "");
+}
+
+void handleSave() {
+  String ssid = server.arg("ssid");
+  ssid.trim();
+  String pass = server.arg("pass");
+  String lat = server.arg("lat");
+  String lon = server.arg("lon");
+  lat.trim(); lat.replace(',', '.');
+  lon.trim(); lon.replace(',', '.');
+  double la = lat.toDouble();
+  double lo = lon.toDouble();
+
+  if (ssid.length() == 0 || lat.length() == 0 || lon.length() == 0 ||
+      fabs(la) > 90 || fabs(lo) > 180 || (la == 0 && lo == 0)) {
+    server.send(400, "text/html; charset=utf-8",
+                msgPage("Bitte WLAN-Name sowie Breiten- und Längengrad prüfen.", true));
+    return;
+  }
+
+  if (pass.length() == 0 && ssid == cfgSsid) pass = cfgPass;
+  String cid = server.arg("cid");
+  cid.trim();
+  String csec = server.arg("csec");
+  csec.trim();
+  if (csec.length() == 0 && cid == cfgClientId) csec = cfgClientSecret;
+  int range = server.arg("range").toInt();
+  if (range < 0 || range >= NUM_RANGES) range = 3;
+
+  prefs.begin("radar", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.putString("cid", cid);
+  prefs.putString("csec", csec);
+  prefs.putDouble("lat", la);
+  prefs.putDouble("lon", lo);
+  prefs.putInt("range", range);
+  prefs.end();
+
+  server.send(200, "text/html; charset=utf-8",
+              msgPage("Gespeichert. Das Gerät startet neu und verbindet sich mit dem WLAN.", false));
+  delay(1500);
+  ESP.restart();
+}
+
+void handleNotFound() {
+  if (portalMode) {
+    server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/");
+    server.send(302, "text/plain", "");
+  } else {
+    server.send(404, "text/plain", "Not found");
+  }
+}
+
+void startServer() {
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/save", HTTP_POST, handleSave);
+  server.on("/rescan", HTTP_GET, handleRescan);
+  server.onNotFound(handleNotFound);
+  server.begin();
+}
+
+void showPortalScreens() {
+  radar->fillScreen(COL_BG);
+  radar->setTextColor(COL_TEXT);
+  radar->setTextSize(2);
+  radar->setCursor(84, 70);
+  radar->print("SETUP");
+  radar->setTextSize(1);
+  radar->setCursor(66, 108);
+  radar->print("Mit WLAN verbinden:");
+  radar->setTextColor(COL_PLANE);
+  radar->setTextSize(2);
+  radar->setCursor(48, 128);
+  radar->print("FlightRadar-");
+  radar->setCursor(90, 148);
+  radar->print("Setup");
+  radar->setTextColor(COL_TEXT);
+  radar->setTextSize(1);
+  radar->setCursor(66, 182);
+  radar->print("Seite oeffnet sich");
+  radar->setCursor(72, 196);
+  radar->print("oder 192.168.4.1");
+
+  infoDisplay.clearDisplay();
+  infoDisplay.setTextColor(SSD1306_WHITE);
+  infoDisplay.setTextSize(1);
+  infoDisplay.setCursor(0, 0);  infoDisplay.print("EINRICHTUNG");
+  infoDisplay.setCursor(0, 14); infoDisplay.print("1. WLAN verbinden:");
+  infoDisplay.setCursor(0, 26); infoDisplay.print("FlightRadar-Setup");
+  infoDisplay.setCursor(0, 40); infoDisplay.print("2. Seite oeffnet sich");
+  infoDisplay.setCursor(0, 52); infoDisplay.print("oder 192.168.4.1");
+  infoDisplay.display();
+}
+
+void runPortal(unsigned long timeoutMs) {
+  portalMode = true;
+  Serial.println("Starting setup portal");
+  WiFi.disconnect();
+  WiFi.mode(WIFI_STA);
+  delay(100);
+  scanWifi();
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(SETUP_AP_NAME);
+  delay(300);
+  dnsServer.start(53, "*", WiFi.softAPIP());
+  startServer();
+  showPortalScreens();
+
+  unsigned long t0 = millis();
+  while (timeoutMs == 0 || millis() - t0 < timeoutMs) {
+    dnsServer.processNextRequest();
+    server.handleClient();
+    delay(2);
+  }
+  ESP.restart();
+}
+
+bool connectWifi() {
+  infoDisplay.clearDisplay();
+  infoDisplay.setTextColor(SSD1306_WHITE);
+  infoDisplay.setTextSize(1);
+  infoDisplay.setCursor(0, 0);
+  infoDisplay.print("Verbinde WLAN ...");
+  infoDisplay.setCursor(0, 14);
+  infoDisplay.print(clip(cfgSsid, 21));
+  infoDisplay.display();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TIMEOUT_MS) {
+    delay(250);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void startStaServices() {
+  portalMode = false;
+  MDNS.begin(MDNS_NAME);
+  MDNS.addService("http", "tcp", 80);
+  startServer();
+
+  infoDisplay.clearDisplay();
+  infoDisplay.setTextColor(SSD1306_WHITE);
+  infoDisplay.setTextSize(1);
+  infoDisplay.setCursor(0, 0);  infoDisplay.print("WLAN verbunden");
+  infoDisplay.setCursor(0, 14); infoDisplay.print(WiFi.localIP());
+  infoDisplay.setCursor(0, 32); infoDisplay.print("Einstellungen:");
+  infoDisplay.setCursor(0, 44); infoDisplay.print("flightradar.local");
+  infoDisplay.display();
+  delay(2500);
+}
+
+// ---------------------------------------------------------------------
 // SETUP / LOOP
 // ---------------------------------------------------------------------
 unsigned long lastPoll = 0;
@@ -649,23 +931,21 @@ void setup() {
   COL_HOME     = radar->color565(60, 140, 255);
   radar->fillScreen(COL_BG);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  infoDisplay.setTextSize(1);
-  infoDisplay.setCursor(0, 0);
-  infoDisplay.print("Connecting WiFi...");
-  infoDisplay.display();
+  loadConfig();
+  bool forceSetup = (digitalRead(ENC_SW) == LOW);
 
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-    delay(250);
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi connected, IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
+  if (!hasConfig()) {
+    runPortal(0);
+  } else if (forceSetup) {
+    runPortal(PORTAL_TIMEOUT_MS);
+  } else if (!connectWifi()) {
     Serial.println("WiFi FAILED to connect");
+    runPortal(PORTAL_TIMEOUT_MS);
   }
+
+  Serial.print("WiFi connected, IP: ");
+  Serial.println(WiFi.localIP());
+  startStaServices();
 
   fetchPlanes();
   drawRadar();
@@ -675,6 +955,8 @@ void setup() {
 }
 
 void loop() {
+  server.handleClient();
+
   bool needsRedraw = checkButton();
 
   noInterrupts();

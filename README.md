@@ -37,11 +37,14 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 ## Setup
 
 1. Install the ESP32 board package and select **ESP32 Dev Module**.
-2. Install the libraries Adafruit GFX Library, Adafruit SSD1306, GFX Library for Arduino and ArduinoJson.
-3. Open `flight_radar/flight_radar.ino` and set `WIFI_SSID`, `WIFI_PASSWORD`, `HOME_LAT`, `HOME_LON`, `OPENSKY_CLIENT_ID` and `OPENSKY_CLIENT_SECRET`.
-4. Upload and open the Serial Monitor at 115200 baud.
+2. Install the libraries *Adafruit GFX Library*, *Adafruit SSD1306*, *GFX Library for Arduino* (by Moon On Our Nation) and *ArduinoJson*.
+3. Upload `flight_radar/flight_radar.ino`. Nothing needs to be edited in the sketch.
+4. On first start the device opens the WiFi **FlightRadar-Setup** (no password). Connect with a phone or PC. The setup page opens automatically, otherwise open `http://192.168.4.1`.
+5. Select the WiFi network, enter the password, latitude and longitude, and optionally the OpenSky client ID and secret. Save. The device restarts and connects.
 
-The OpenSky credentials are an OAuth2 API client created in your OpenSky account. Do not commit them.
+The OpenSky credentials are an OAuth2 API client from your OpenSky account. Without them, requests are sent anonymously with lower rate limits.
+
+To change settings later, hold the encoder while powering on, or open `http://flightradar.local/` in the home network. Settings are stored in flash. If the saved WiFi cannot be reached, the setup portal opens and the device restarts after 10 minutes to try again.
 
 ## Controls
 
@@ -52,13 +55,13 @@ The OpenSky credentials are an OAuth2 API client created in your OpenSky account
 | Turn (SELECT) | Select an aircraft (red) |
 | Long press (~1 s) | Next OLED page (1/3, 2/3, 3/3) |
 | No input for 10 s (SELECT) | Back to ZOOM, nearest aircraft selected |
+| Hold while powering on | Opens the setup portal |
 
 The selection stays on the same aircraft between updates. Data is polled every 30 s and backs off for 3 minutes on HTTP 429.
 
 ## Notes
 
-- Some labels on OLED pages 2 and 3 are in German (Betreiber, Statistik, Naechst, Kein Verkehr).
-- WiFi credentials are compiled into the sketch.
+- The setup page and some OLED labels are in German.
 
 ## Guides
 
