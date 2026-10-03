@@ -42,7 +42,7 @@ GPIO2 and GPIO15 are strapping pins. If an upload fails, disconnect both wires b
 
 ## Case
 
-3D-printable enclosure: [`case/Flightradar_case.stl`](case/Flightradar_case.stl). The underside has room for four adhesive anti-slip pads, 10 mm diameter.
+3D-printable enclosure: [`case/Flightradar_case.stl`](case/Flightradar_case.stl). The underside has room for adhesive anti-slip pads, 10 mm diameter.
 
 ![Finished device](docs/images/photo-desk.jpg)
 
