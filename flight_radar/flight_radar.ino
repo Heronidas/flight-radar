@@ -27,6 +27,7 @@ const unsigned long BACKOFF_429_MS     = 180000;
 const unsigned long LONG_PRESS_MS      = 700;
 const unsigned long WIFI_TIMEOUT_MS    = 20000;
 const unsigned long PORTAL_TIMEOUT_MS  = 600000;
+const unsigned long SCREENSAVER_MS     = 300000;
 
 #define TFT_CS   15
 #define TFT_DC   2
@@ -142,6 +143,8 @@ void IRAM_ATTR handleEncoder() {
   }
 }
 
+bool btnActivity = false;
+unsigned long lastActivityMs = 0;
 bool btnWasDown = false;
 bool longPressDone = false;
 unsigned long btnDownMs = 0;
@@ -155,6 +158,7 @@ bool checkButton() {
   if (down != btnWasDown && now - btnEdgeMs > 25) {
     btnEdgeMs = now;
     btnWasDown = down;
+    btnActivity = true;
     if (down) {
       btnDownMs = now;
       longPressDone = false;
@@ -683,6 +687,79 @@ void drawInfo() {
   infoDisplay.display();
 }
 
+bool screensaverActive = false;
+float sweepDeg = 0;
+const int SWEEP_STEP = 3;
+const int SWEEP_TRAIL = 10;
+const int SWEEP_R = RADAR_MAX_R - 2;
+const unsigned long BLIP_LIFE_MS = 3000;
+
+struct Blip {
+  int16_t x, y;
+  unsigned long t;
+  bool on;
+};
+Blip blips[24];
+int blipNext = 0;
+
+void drawSweepLine(float deg, uint16_t col) {
+  float rad = toRad(deg);
+  radar->drawLine(RADAR_CX, RADAR_CY, RADAR_CX + (int)(SWEEP_R * sin(rad)),
+                  RADAR_CY - (int)(SWEEP_R * cos(rad)), col);
+}
+
+void startScreensaver() {
+  screensaverActive = true;
+  for (auto &b : blips) b.on = false;
+  sweepDeg = 0;
+  radar->fillScreen(COL_BG);
+  radar->drawCircle(RADAR_CX, RADAR_CY, RADAR_MAX_R, COL_RING);
+  infoDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
+}
+
+void stopScreensaver() {
+  screensaverActive = false;
+  infoDisplay.ssd1306_command(SSD1306_DISPLAYON);
+}
+
+void stepScreensaver() {
+  float prev = sweepDeg;
+  sweepDeg = fmod(sweepDeg + SWEEP_STEP, 360.0f);
+  int rangeKm = RANGE_PRESETS[rangeIndex];
+
+  for (int i = 0; i < visibleCount; i++) {
+    float b = planes[i].bearing_deg;
+    bool hit = prev < sweepDeg ? (b >= prev && b < sweepDeg) : (b >= prev || b < sweepDeg);
+    float r = planes[i].distance_km / rangeKm * SWEEP_R;
+    if (!hit || r > RADAR_MAX_R - 7) continue;
+    Blip &s = blips[blipNext];
+    if (s.on) radar->fillCircle(s.x, s.y, 4, COL_BG);
+    s.x = RADAR_CX + (int)(r * sin(toRad(b)));
+    s.y = RADAR_CY - (int)(r * cos(toRad(b)));
+    s.t = millis();
+    s.on = true;
+    blipNext = (blipNext + 1) % 24;
+  }
+
+  drawSweepLine(sweepDeg - SWEEP_TRAIL * SWEEP_STEP, COL_BG);
+  for (int k = SWEEP_TRAIL - 1; k >= 0; k--) {
+    int g = 255 * (SWEEP_TRAIL - k) / SWEEP_TRAIL;
+    drawSweepLine(sweepDeg - k * SWEEP_STEP, radar->color565(0, g, 0));
+  }
+
+  for (auto &b : blips) {
+    if (!b.on) continue;
+    unsigned long age = millis() - b.t;
+    if (age >= BLIP_LIFE_MS) {
+      radar->fillCircle(b.x, b.y, 4, COL_BG);
+      b.on = false;
+    } else {
+      radar->fillCircle(b.x, b.y, 3, radar->color565(0, 255 - 255 * age / BLIP_LIFE_MS, 0));
+    }
+  }
+  radar->fillCircle(RADAR_CX, RADAR_CY, 2, COL_HOME);
+}
+
 WebServer server(80);
 bool portalMode = false;
 bool wifiScanned = false;
@@ -1123,6 +1200,7 @@ void setup() {
   startOta();
 
   lastPoll = millis();
+  lastActivityMs = millis();
   if (!hasCoords()) {
     showNeedCoords();
     return;
@@ -1147,6 +1225,30 @@ void loop() {
   int delta = encoderDelta;
   encoderDelta = 0;
   interrupts();
+
+  bool activity = btnActivity || delta != 0;
+  btnActivity = false;
+  if (activity) lastActivityMs = millis();
+
+  if (screensaverActive) {
+    if (!activity) {
+      if (millis() - lastPoll > pollIntervalMs) {
+        if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+        fetchPlanes();
+        lastPoll = millis();
+      }
+      stepScreensaver();
+      delay(20);
+      return;
+    }
+    stopScreensaver();
+    if (btnWasDown) longPressDone = true;
+    delta = 0;
+    needsRedraw = true;
+  } else if (millis() - lastActivityMs > SCREENSAVER_MS) {
+    startScreensaver();
+    return;
+  }
 
   if (delta != 0) {
     if (currentMode == MODE_ZOOM) {
